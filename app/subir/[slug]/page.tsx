@@ -1,9 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 
 type Step = 'identify' | 'upload' | 'success'
+type PhotoStatus = 'pending' | 'uploading' | 'done' | 'error'
+
+interface PhotoItem {
+  file: File
+  preview: string
+  status: PhotoStatus
+}
 
 export default function SubirFotosPage() {
   const params = useParams()
@@ -13,11 +20,12 @@ export default function SubirFotosPage() {
   const [identifier, setIdentifier] = useState('')
   const [guestId, setGuestId] = useState('')
   const [guestName, setGuestName] = useState('')
-  const [photos, setPhotos] = useState<File[]>([])
-  const [previews, setPreviews] = useState<string[]>([])
+  const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [uploadResult, setUploadResult] = useState<{ exitosas: number; total: number } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function handleIdentify(e: React.FormEvent) {
     e.preventDefault()
@@ -35,7 +43,6 @@ export default function SubirFotosPage() {
 
       if (!res.ok) {
         setErrorMsg(data.error || 'No encontramos tu registro.')
-        setLoading(false)
         return
       }
 
@@ -50,19 +57,37 @@ export default function SubirFotosPage() {
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || [])
-    if (files.length > 20) {
-      setErrorMsg('Máximo 20 fotos por vez.')
+    const nuevas = Array.from(e.target.files || [])
+
+    if (photos.length + nuevas.length > 20) {
+      setErrorMsg(`Podés subir máximo 20 fotos en total. Ya tenés ${photos.length}.`)
       return
     }
-    setErrorMsg('')
-    setPhotos(files)
-    setPreviews(files.map(f => URL.createObjectURL(f)))
+
+    const sobreMaximo = nuevas.filter(f => f.size > 15 * 1024 * 1024)
+    if (sobreMaximo.length > 0) {
+      setErrorMsg(`${sobreMaximo.length} foto(s) superan los 15MB y no se agregarán.`)
+    } else {
+      setErrorMsg('')
+    }
+
+    const validas = nuevas.filter(f => f.size <= 15 * 1024 * 1024)
+    const nuevosItems: PhotoItem[] = validas.map(f => ({
+      file: f,
+      preview: URL.createObjectURL(f),
+      status: 'pending',
+    }))
+
+    setPhotos(prev => [...prev, ...nuevosItems])
+
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function removePhoto(index: number) {
-    setPhotos(prev => prev.filter((_, i) => i !== index))
-    setPreviews(prev => prev.filter((_, i) => i !== index))
+    setPhotos(prev => {
+      URL.revokeObjectURL(prev[index].preview)
+      return prev.filter((_, i) => i !== index)
+    })
   }
 
   async function handleUpload(e: React.FormEvent) {
@@ -74,44 +99,55 @@ export default function SubirFotosPage() {
 
     setLoading(true)
     setErrorMsg('')
+    setProgress({ current: 0, total: photos.length })
 
-    try {
-      const formData = new FormData()
-      formData.append('eventSlug', slug)
-      formData.append('guestId', guestId)
-      photos.forEach(photo => formData.append('photos', photo))
+    let exitosas = 0
 
-      const res = await fetch('/api/upload-event-photos', {
-        method: 'POST',
-        body: formData,
-      })
+    for (let i = 0; i < photos.length; i++) {
+      setPhotos(prev =>
+        prev.map((p, idx) => idx === i ? { ...p, status: 'uploading' } : p)
+      )
+      setProgress({ current: i + 1, total: photos.length })
 
-      const data = await res.json()
+      try {
+        const formData = new FormData()
+        formData.append('eventSlug', slug)
+        formData.append('guestId', guestId)
+        formData.append('photos', photos[i].file)
 
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Error al subir las fotos.')
-        setLoading(false)
-        return
+        const res = await fetch('/api/upload-event-photos', {
+          method: 'POST',
+          body: formData,
+        })
+
+        const data = await res.json()
+        const ok = res.ok && data.results?.[0]?.success
+
+        setPhotos(prev =>
+          prev.map((p, idx) => idx === i ? { ...p, status: ok ? 'done' : 'error' } : p)
+        )
+
+        if (ok) exitosas++
+      } catch {
+        setPhotos(prev =>
+          prev.map((p, idx) => idx === i ? { ...p, status: 'error' } : p)
+        )
       }
-
-      const exitosas = data.results.filter((r: any) => r.success).length
-      setUploadResult({ exitosas, total: photos.length })
-      setStep('success')
-    } catch {
-      setErrorMsg('Error de conexión. Intentá de nuevo.')
-    } finally {
-      setLoading(false)
     }
+
+    setUploadResult({ exitosas, total: photos.length })
+    setStep('success')
+    setLoading(false)
   }
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center px-4 py-10">
+    <main className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-start px-4 py-10">
       <div className="w-full max-w-md">
 
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">📸 Subí tus fotos</h1>
           <p className="text-gray-400 text-sm">
-            Compartí tus fotos del evento y las distribuimos automáticamente
+            Compartí tus fotos y las distribuimos automáticamente
           </p>
         </div>
 
@@ -123,11 +159,13 @@ export default function SubirFotosPage() {
               </label>
               <input
                 type="text"
+                inputMode="email"
+                autoComplete="email"
                 value={identifier}
                 onChange={e => setIdentifier(e.target.value)}
                 placeholder="Ej: 1134567890 o vos@email.com"
                 required
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-4 text-white text-lg placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
             </div>
 
@@ -138,7 +176,7 @@ export default function SubirFotosPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-semibold py-3 rounded-lg transition"
+              className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-gray-600 text-white font-semibold py-4 text-lg rounded-xl transition"
             >
               {loading ? 'Verificando...' : 'Continuar →'}
             </button>
@@ -147,53 +185,95 @@ export default function SubirFotosPage() {
 
         {step === 'upload' && (
           <form onSubmit={handleUpload} className="space-y-5">
-            <p className="text-center text-green-400 font-medium">
+
+            <p className="text-center text-green-400 font-medium text-lg">
               ¡Hola, {guestName}! 👋
             </p>
-            <p className="text-center text-gray-400 text-sm">
-              Seleccioná hasta 20 fotos del evento
-            </p>
 
-            <label className="block w-full cursor-pointer">
-              <div className="border-2 border-dashed border-gray-600 hover:border-blue-500 rounded-xl p-8 text-center transition">
-                <p className="text-4xl mb-2">📷</p>
-                <p className="text-gray-400 text-sm">Tocá para seleccionar fotos</p>
-                <p className="text-gray-600 text-xs mt-1">JPG, PNG — máx 15MB por foto</p>
-              </div>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleFileChange}
-                className="hidden"
-              />
-            </label>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || photos.length >= 20}
+              className="w-full border-2 border-dashed border-gray-600 hover:border-blue-500 active:border-blue-400 disabled:opacity-40 rounded-2xl py-10 text-center transition"
+            >
+              <p className="text-5xl mb-3">📷</p>
+              <p className="text-white font-semibold text-lg">
+                {photos.length === 0 ? 'Elegí tus fotos' : 'Agregar más fotos'}
+              </p>
+              <p className="text-gray-400 text-sm mt-1">
+                Galería o cámara · hasta 20 fotos · máx 15MB c/u
+              </p>
+              {photos.length > 0 && (
+                <p className="text-blue-400 text-sm mt-2 font-medium">
+                  {photos.length} / 20 seleccionadas
+                </p>
+              )}
+            </button>
 
-            {previews.length > 0 && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
+            {photos.length > 0 && (
               <div className="grid grid-cols-3 gap-2">
-                {previews.map((src, i) => (
+                {photos.map((item, i) => (
                   <div key={i} className="relative aspect-square">
                     <img
-                      src={src}
+                      src={item.preview}
                       alt={`foto ${i + 1}`}
-                      className="w-full h-full object-cover rounded-lg"
+                      className={`w-full h-full object-cover rounded-xl transition ${
+                        item.status === 'uploading' ? 'opacity-50' : 'opacity-100'
+                      }`}
                     />
-                    <button
-                      type="button"
-                      onClick={() => removePhoto(i)}
-                      className="absolute top-1 right-1 bg-black bg-opacity-60 rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-red-600 transition"
-                    >
-                      ✕
-                    </button>
+
+                    {item.status === 'uploading' && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black bg-opacity-40">
+                        <span className="text-2xl animate-spin">⏳</span>
+                      </div>
+                    )}
+                    {item.status === 'done' && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-green-900 bg-opacity-50">
+                        <span className="text-3xl">✅</span>
+                      </div>
+                    )}
+                    {item.status === 'error' && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-red-900 bg-opacity-60">
+                        <span className="text-3xl">❌</span>
+                      </div>
+                    )}
+
+                    {item.status === 'pending' && !loading && (
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(i)}
+                        className="absolute top-1 right-1 bg-black bg-opacity-70 rounded-full w-7 h-7 flex items-center justify-center text-sm hover:bg-red-600 active:bg-red-700 transition"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
-            {photos.length > 0 && (
-              <p className="text-center text-gray-400 text-sm">
-                {photos.length} foto{photos.length !== 1 ? 's' : ''} seleccionada{photos.length !== 1 ? 's' : ''}
-              </p>
+            {loading && progress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm text-gray-400">
+                  <span>Subiendo foto {progress.current} de {progress.total}...</span>
+                  <span>{Math.round((progress.current / progress.total) * 100)}%</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-3">
+                  <div
+                    className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
             )}
 
             {errorMsg && (
@@ -203,32 +283,44 @@ export default function SubirFotosPage() {
             <button
               type="submit"
               disabled={loading || photos.length === 0}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white font-semibold py-3 rounded-lg transition"
+              className="w-full bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:bg-gray-600 text-white font-semibold py-4 text-lg rounded-xl transition"
             >
-              {loading ? 'Subiendo fotos...' : `Subir ${photos.length > 0 ? photos.length : ''} foto${photos.length !== 1 ? 's' : ''} →`}
+              {loading
+                ? `Subiendo ${progress.current} de ${progress.total}...`
+                : `Subir ${photos.length} foto${photos.length !== 1 ? 's' : ''} →`}
             </button>
           </form>
         )}
 
         {step === 'success' && uploadResult && (
-          <div className="text-center space-y-4">
-            <p className="text-6xl">🎉</p>
+          <div className="text-center space-y-5">
+            <p className="text-7xl">🎉</p>
             <h2 className="text-2xl font-bold">¡Gracias!</h2>
-            <p className="text-gray-300">
-              Subiste {uploadResult.exitosas} de {uploadResult.total} fotos correctamente.
-            </p>
-            <p className="text-gray-500 text-sm">
-              Las distribuimos automáticamente a cada persona que aparece en tus fotos.
-            </p>
+
+            <div className="bg-gray-800 rounded-2xl p-5 space-y-2">
+              <p className="text-green-400 font-semibold text-lg">
+                ✅ {uploadResult.exitosas} foto{uploadResult.exitosas !== 1 ? 's' : ''} subida{uploadResult.exitosas !== 1 ? 's' : ''} correctamente
+              </p>
+              {uploadResult.total - uploadResult.exitosas > 0 && (
+                <p className="text-red-400 text-sm">
+                  ❌ {uploadResult.total - uploadResult.exitosas} foto(s) no se pudieron subir
+                </p>
+              )}
+              <p className="text-gray-400 text-sm pt-1">
+                Las distribuimos automáticamente a cada persona que aparece en tus fotos.
+              </p>
+            </div>
+
             <button
               onClick={() => {
                 setPhotos([])
-                setPreviews([])
+                setProgress({ current: 0, total: 0 })
+                setUploadResult(null)
                 setStep('upload')
               }}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition"
+              className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-4 text-lg rounded-xl transition"
             >
-              Subir más fotos
+              📷 Subir más fotos
             </button>
           </div>
         )}
