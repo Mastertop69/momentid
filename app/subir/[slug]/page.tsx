@@ -12,6 +12,37 @@ interface PhotoItem {
   status: PhotoStatus
 }
 
+// ── Compresión de imagen en el navegador ──────────────────────────────────────
+async function comprimirFoto(file: File): Promise<File> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const MAX = 1800
+      let { width, height } = img
+      if (width > MAX || height > MAX) {
+        if (width > height) { height = Math.round(height * MAX / width); width = MAX }
+        else { width = Math.round(width * MAX / height); height = MAX }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) { resolve(file); return }
+          resolve(new File([blob], file.name, { type: 'image/jpeg' }))
+        },
+        'image/jpeg',
+        0.85
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
+
 export default function SubirFotosPage() {
   const params = useParams()
   const slug = params.slug as string
@@ -31,21 +62,14 @@ export default function SubirFotosPage() {
     e.preventDefault()
     setLoading(true)
     setErrorMsg('')
-
     try {
       const res = await fetch('/api/identify-guest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, eventSlug: slug }),
       })
-
       const data = await res.json()
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'No encontramos tu registro.')
-        return
-      }
-
+      if (!res.ok) { setErrorMsg(data.error || 'No encontramos tu registro.'); return }
       setGuestId(data.guestId)
       setGuestName(data.guestName)
       setStep('upload')
@@ -58,28 +82,23 @@ export default function SubirFotosPage() {
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const nuevas = Array.from(e.target.files || [])
-
     if (photos.length + nuevas.length > 20) {
       setErrorMsg(`Podés subir máximo 20 fotos en total. Ya tenés ${photos.length}.`)
       return
     }
-
     const sobreMaximo = nuevas.filter(f => f.size > 15 * 1024 * 1024)
     if (sobreMaximo.length > 0) {
       setErrorMsg(`${sobreMaximo.length} foto(s) superan los 15MB y no se agregarán.`)
     } else {
       setErrorMsg('')
     }
-
     const validas = nuevas.filter(f => f.size <= 15 * 1024 * 1024)
     const nuevosItems: PhotoItem[] = validas.map(f => ({
       file: f,
       preview: URL.createObjectURL(f),
       status: 'pending',
     }))
-
     setPhotos(prev => [...prev, ...nuevosItems])
-
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -92,10 +111,7 @@ export default function SubirFotosPage() {
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
-    if (photos.length === 0) {
-      setErrorMsg('Seleccioná al menos una foto.')
-      return
-    }
+    if (photos.length === 0) { setErrorMsg('Seleccioná al menos una foto.'); return }
 
     setLoading(true)
     setErrorMsg('')
@@ -104,34 +120,29 @@ export default function SubirFotosPage() {
     let exitosas = 0
 
     for (let i = 0; i < photos.length; i++) {
-      setPhotos(prev =>
-        prev.map((p, idx) => idx === i ? { ...p, status: 'uploading' } : p)
-      )
+      setPhotos(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'uploading' } : p))
       setProgress({ current: i + 1, total: photos.length })
 
       try {
+        // Comprimir antes de subir
+        const fotoComprimida = await comprimirFoto(photos[i].file)
+
         const formData = new FormData()
         formData.append('eventSlug', slug)
         formData.append('guestId', guestId)
-        formData.append('photos', photos[i].file)
+        formData.append('photos', fotoComprimida)
 
         const res = await fetch('/api/upload-event-photos', {
           method: 'POST',
           body: formData,
         })
-
         const data = await res.json()
         const ok = res.ok && data.results?.[0]?.success
 
-        setPhotos(prev =>
-          prev.map((p, idx) => idx === i ? { ...p, status: ok ? 'done' : 'error' } : p)
-        )
-
+        setPhotos(prev => prev.map((p, idx) => idx === i ? { ...p, status: ok ? 'done' : 'error' } : p))
         if (ok) exitosas++
       } catch {
-        setPhotos(prev =>
-          prev.map((p, idx) => idx === i ? { ...p, status: 'error' } : p)
-        )
+        setPhotos(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'error' } : p))
       }
     }
 
@@ -168,11 +179,7 @@ export default function SubirFotosPage() {
                 className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-4 text-white text-lg placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
             </div>
-
-            {errorMsg && (
-              <p className="text-red-400 text-sm text-center">{errorMsg}</p>
-            )}
-
+            {errorMsg && <p className="text-red-400 text-sm text-center">{errorMsg}</p>}
             <button
               type="submit"
               disabled={loading}
@@ -185,7 +192,6 @@ export default function SubirFotosPage() {
 
         {step === 'upload' && (
           <form onSubmit={handleUpload} className="space-y-5">
-
             <p className="text-center text-green-400 font-medium text-lg">
               ¡Hola, {guestName}! 👋
             </p>
@@ -230,7 +236,6 @@ export default function SubirFotosPage() {
                         item.status === 'uploading' ? 'opacity-50' : 'opacity-100'
                       }`}
                     />
-
                     {item.status === 'uploading' && (
                       <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black bg-opacity-40">
                         <span className="text-2xl animate-spin">⏳</span>
@@ -241,17 +246,16 @@ export default function SubirFotosPage() {
                         <span className="text-3xl">✅</span>
                       </div>
                     )}
-     {item.status === 'error' && (
-  <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl bg-red-900 bg-opacity-75 px-1">
-    <span className="text-2xl">❌</span>
-    <p className="text-white text-xs text-center mt-1 leading-tight break-all">
-      {item.file.name.length > 20
-        ? item.file.name.slice(0, 18) + '...'
-        : item.file.name}
-    </p>
-  </div>
-)}
-
+                    {item.status === 'error' && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl bg-red-900 bg-opacity-75 px-1">
+                        <span className="text-2xl">❌</span>
+                        <p className="text-white text-xs text-center mt-1 leading-tight break-all">
+                          {item.file.name.length > 20
+                            ? item.file.name.slice(0, 18) + '...'
+                            : item.file.name}
+                        </p>
+                      </div>
+                    )}
                     {item.status === 'pending' && !loading && (
                       <button
                         type="button"
@@ -281,9 +285,7 @@ export default function SubirFotosPage() {
               </div>
             )}
 
-            {errorMsg && (
-              <p className="text-red-400 text-sm text-center">{errorMsg}</p>
-            )}
+            {errorMsg && <p className="text-red-400 text-sm text-center">{errorMsg}</p>}
 
             <button
               type="submit"
@@ -301,7 +303,6 @@ export default function SubirFotosPage() {
           <div className="text-center space-y-5">
             <p className="text-7xl">🎉</p>
             <h2 className="text-2xl font-bold">¡Gracias!</h2>
-
             <div className="bg-gray-800 rounded-2xl p-5 space-y-2">
               <p className="text-green-400 font-semibold text-lg">
                 ✅ {uploadResult.exitosas} foto{uploadResult.exitosas !== 1 ? 's' : ''} subida{uploadResult.exitosas !== 1 ? 's' : ''} correctamente
@@ -315,7 +316,6 @@ export default function SubirFotosPage() {
                 Las distribuimos automáticamente a cada persona que aparece en tus fotos.
               </p>
             </div>
-
             <button
               onClick={() => {
                 setPhotos([])
