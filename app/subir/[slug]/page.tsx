@@ -12,7 +12,6 @@ interface PhotoItem {
   status: PhotoStatus
 }
 
-// ── Compresión de imagen en el navegador ──────────────────────────────────────
 async function comprimirFoto(file: File): Promise<File> {
   return new Promise((resolve) => {
     const img = new Image()
@@ -124,9 +123,7 @@ export default function SubirFotosPage() {
       setProgress({ current: i + 1, total: photos.length })
 
       try {
-        // Comprimir antes de subir
         const fotoComprimida = await comprimirFoto(photos[i].file)
-
         const formData = new FormData()
         formData.append('eventSlug', slug)
         formData.append('guestId', guestId)
@@ -147,8 +144,15 @@ export default function SubirFotosPage() {
     }
 
     setUploadResult({ exitosas, total: photos.length })
-    setStep('success')
     setLoading(false)
+
+    // Si todas OK → pantalla de éxito inmediata
+    // Si hubo errores → esperar 4 segundos para que el usuario vea cuál falló
+    if (exitosas === photos.length) {
+      setStep('success')
+    } else {
+      setTimeout(() => setStep('success'), 4000)
+    }
   }
 
   return (
@@ -267,6 +271,18 @@ export default function SubirFotosPage() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Contador de segundos cuando hay errores */}
+            {!loading && uploadResult && uploadResult.exitosas < uploadResult.total && (
+              <div className="bg-red-900 bg-opacity-40 rounded-xl p-3 text-center">
+                <p className="text-red-300 text-sm font-medium">
+                  ❌ {uploadResult.total - uploadResult.exitosas} foto(s) no se pudieron subir — revisalas arriba
+                </p>
+                <p className="text-gray-400 text-xs mt-1">
+                  Continuando en unos segundos...
+                </p>
               </div>
             )}
 
