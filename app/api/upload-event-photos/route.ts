@@ -88,13 +88,13 @@ export async function POST(request: NextRequest) {
 
         // Indexar en Rekognition
         let faceIds: string[] = []
-        let processedStatus = 'processed'
+        let processedStatus ='done'
 
         try {
           faceIds = await indexFace(eventSlug, photoId, buffer)
         } catch (rekError) {
           console.error('Error Rekognition:', rekError)
-          processedStatus = 'error_rekognition'
+          processedStatus = 'error'
         }
 
         // Guardar en event_photos
