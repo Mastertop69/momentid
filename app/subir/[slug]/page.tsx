@@ -251,7 +251,6 @@ export default function SubirFotosPage() {
     </p>
   </div>
 )}
-                    )}
 
                     {item.status === 'pending' && !loading && (
                       <button
