@@ -241,10 +241,16 @@ export default function SubirFotosPage() {
                         <span className="text-3xl">✅</span>
                       </div>
                     )}
-                    {item.status === 'error' && (
-                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-red-900 bg-opacity-60">
-                        <span className="text-3xl">❌</span>
-                      </div>
+                    {{item.status === 'error' && (
+  <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl bg-red-900 bg-opacity-75 px-1">
+    <span className="text-2xl">❌</span>
+    <p className="text-white text-xs text-center mt-1 leading-tight break-all">
+      {item.file.name.length > 20
+        ? item.file.name.slice(0, 18) + '...'
+        : item.file.name}
+    </p>
+  </div>
+)}
                     )}
 
                     {item.status === 'pending' && !loading && (
